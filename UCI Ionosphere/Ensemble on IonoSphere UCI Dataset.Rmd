@@ -1,0 +1,170 @@
+---
+title: "Ensemble on IonoSphere Data UCI"
+output: html_notebook
+---
+
+
+
+
+Loading libraries
+```{r}
+library(mlbench)
+library(caret)
+#install.packages("caretEnsemble")
+library(ggplot2)
+library(caretEnsemble)
+```
+
+loading the Dataset
+No Header is present in the dataset, so we use the default values provided
+```{r}
+Iono_data=read.csv('ionosphere.csv',header=FALSE)
+head(Iono_data)
+```
+```{r}
+summary(Iono_data)
+```
+
+All the data are in the range of 0 to 1 and continuous except the first and last column that has categorical data bad("b") or good("g")
+```{r}
+dim(Iono_data)
+```
+
+
+The Data set has total of 351 rows and 35 columns
+
+```{r}
+sum(is.na(Iono_data))
+```
+The data set has no NA values
+
+
+```{r}
+sum(do.call(cbind,lapply(Iono_data,is.nan)))
+```
+
+The data set has no NAN values
+
+```{r}
+sum(do.call(cbind,lapply(Iono_data,is.infinite)))
+```
+
+The data set contains all finite values
+```{r}
+summary(Iono_data[,"V2"])
+```
+
+
+2nd column is all zeros so that column can be excluded from the dataset.
+1st column is all 0's an 1's
+
+```{r}
+sum(Iono_data[,"V1"]==0 | Iono_data[,"V1"]==1)
+```
+
+```{r}
+str(Iono_data)
+```
+
+```{r}
+Iono_data=Iono_data[,-2]
+Iono_data$V1=as.numeric(as.character(Iono_data$V1))
+```
+
+
+#Let US Apply Boosting Algorithms
+We apply C5.0 and Stochastic Gradient Boosting here
+
+```{r}
+control=trainControl(method="repeatedcv",number=10,repeats = 3)
+set.seed(110)
+fit.c50=train(V35 ~.,data=Iono_data,method="C5.0",metric="Accuracy",trControl=control)
+set.seed(110)
+fit.sgm=train(V35~.,data=Iono_data,method="gbm",metric="Accuracy",trControl=control,verbose=FALSE)
+boosting=resamples(list(c5.0=fit.c50,gbm=fit.sgm))
+summary(boosting)
+dotplot(boosting)
+
+```
+C5.0 has an accuracy of 94.4%
+
+
+We will do work on bagging algorithms now
+
+We use Bagged CART and Random Forest
+
+```{r}
+control=trainControl(method="repeatedcv",number=10,repeats=3)
+set.seed(110)
+fit.treebag=train(V35~.,data=Iono_data,method="treebag",metric="Accuracy",trControl=control) 
+set.seed(110)
+fit.rf=train(V35~.,data=Iono_data,method="rf",metric="Accuracy",trControl=control)
+bagging_results=resamples(list(treebag=fit.treebag,rf=fit.rf))
+summary(bagging_results)
+```
+
+
+Random forest has an accuracy of 93%
+```{r}
+dotplot(bagging_results)
+```
+
+Now we do Stacking, 
+
+caretEnsemble package combines multiple caret models, so given a list of caret models caretStack() function can be used to create a higher order model from the predictions of sub-models
+
+ We create 5 sub models for this dataset, they are
+ 1. Linear Discriminate Analyis
+ 2. Classificationa and Regression Trees
+ 3. Logistic Regression 
+ 4. k-Nearest Neighbors 
+ 5. Support Vector Machines
+ 
+ 
+ 
+```{r}
+control=trainControl(method="repeatedcv",number=10,repeats=3,savePredictions=TRUE,classProbs = TRUE)
+algo=c('lda','rpart','glm','knn','svmRadial')
+set.seed(110)
+models=caretList(V35~.,data=Iono_data,trControl=control,methodList=algo)
+results=resamples(models)
+summary(results)
+```
+glm has an accuracy of 88.4%
+
+```{r}
+dotplot(results)
+```
+
+when we combinme predictions of different models usng stacking, it is desirable that the predictions made by the sub-models have low correlation.
+
+If the predictions for the submodels were highly corrected(>0.75) then they would be making the same or very similar predictions most of the time reducing the benefit of combining the predictions
+
+```{r}
+modelCor(results)
+
+```
+
+```{r}
+splom(results)
+```
+
+
+```{r}
+# stack using glm
+stackControl <- trainControl(method="repeatedcv", number=10, repeats=3, savePredictions=TRUE, classProbs=TRUE)
+set.seed(110)
+stack.glm <- caretStack(models, method="glm", metric="Accuracy", trControl=stackControl)
+print(stack.glm)
+```
+This model lifted the accuracy to 92.9% 
+
+```{r}
+# stack using random forest
+set.seed(110)
+stack.rf <- caretStack(models, method="rf", metric="Accuracy", trControl=stackControl)
+print(stack.rf)
+
+```
+
+This model lifted the accuracy to 95.2%
